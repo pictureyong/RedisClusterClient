@@ -7,20 +7,12 @@
 
 bool InitGetClient() {
     std::vector<redis::TRedisServers::TIpPort> ip_ports;
-    redis::TRedisServers::TIpPort ip_port_1 = {
-        host:"127.0.0.1",
-        port:6389
-    };
+    redis::TRedisServers::TIpPort ip_port_1("127.0.0.1", 6389);
     ip_ports.push_back(ip_port_1);
-    redis::TRedisServers::TOptions options = {
-        password:"1234567Myc",
-        timeout:5,
-        poolSize:20
-    };
-    redis::TRedisServers redis_servers = {
-        ipPorts: ip_ports,
-        options: options
-    };
+    redis::TRedisServers::TOptions options("1234567Myc", 5, 20);
+    redis::TRedisServers redis_servers;
+    redis_servers.ipPorts = ip_ports;
+    redis_servers.options = options;
     if ( !redis::CRedisClusterClient::Instance()->ConnectRedis(redis_servers) ) {
     // if ( !redis::CRedisClusterClient::Instance()->ConnectRedis("127.0.0.1", 6389, "1234567Myc", 6, 20) ) {
         VLOG(FATAL) << __FUNCTION__ << ", ConnectRedis fail.";
