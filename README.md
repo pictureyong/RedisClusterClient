@@ -5,7 +5,7 @@
 ### Support Redis Cluster client
 ### Support master-standby switching
 ### Support slot adjustment
-### Redis 集群 单点 客户端，线程安全的连接池
+### Redis 集群 单点 客户端，线程安全的连接池，支持主备切换，槽位重分配
 # Install
 ```
 git clone https://github.com/pictureyong/RedisClusterClient.git --recursive 
