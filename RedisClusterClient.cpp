@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include <unistd.h>
+#include <thread>
 // #include <sys/time.h>
 #include <iostream>
 #include <memory>
@@ -843,6 +844,9 @@ TRedisConnection *CRedisClusterClient::getConnection(TRedisConnectionList* redis
     }
     while (true) {
         int idx = rand() % REDIS_SECTION_NUM;
+        //std::thread::id tid = std::this_thread::get_id();
+        //_Thrd_imp_t t = *(_Thrd_imp_t*)(char*)&tid;
+        //int idx = t._Id % REDIS_SECTION_NUM;
         for ( size_t i = 0;i < REDIS_SECTION_NUM; ++i, ++idx ) {
             do {
                 TRedisConnectionList::TConnectionMutex& connect_mutex =

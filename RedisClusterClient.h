@@ -30,7 +30,7 @@
 
 #define MAX_REDIS_POOLSIZE 242
 #define MAX_TIME_OUT       5
-#define REDIS_SECTION_NUM  11
+#define REDIS_SECTION_NUM  1
 
 /*
 namespace common  {
@@ -210,6 +210,11 @@ typedef struct RedisConnectionWrap {
     TRedisConnection*   redisConnection;
     CRedisClusterClient*    redisClusterClient;
 } TRedisConnectionWrap;
+
+typedef struct {
+    void *_Hnd;
+    unsigned int _Id;
+} _Thrd_imp_t;
 
 class CRedisClusterClient {
 
