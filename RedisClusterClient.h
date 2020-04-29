@@ -14,10 +14,16 @@
 #include <vector>
 #include <string>
 
+// #define THREAD_LOCAL
+
+#ifdef THREAD_LOCAL
+#include <pthread.h>
+#endif
+
 #include "Util.h"
 #include "hiredis/hiredis.h"
 
-//#include <boost/thread.hpp>
+// #include <boost/thread.hpp>
 // #include <mutex>
 // #include <shared_mutex>
 #include "Mutex.hpp"
@@ -169,7 +175,7 @@ typedef struct RedisConnection {
         mCtx(NULL) {
         ;
     }
-    ~RedisConnection(){
+    ~RedisConnection() {
        Destory(); 
     }
     
@@ -291,14 +297,26 @@ public:
     int getKeySlotIndex(const std::string& key);
 
 private:
+#ifdef THREAD_LOCAL
+    static std::once_flag s_redis_connect_flag;
+    static pthread_key_t s_redis_connect;
+    static void initPthreadKey();
+    TRedisConnection* getRedisConnect();
+    static void destructorRedisConnect(void* ptr);
+#else
+    std::vector<TRedisConnectionList*>  _redis_connections;
+#endif
     static CRedisClusterClient* s_redis_cluster_client;
      
-    common::RwMutex                     _rw_mutex;
-    std::vector<TRedisConnectionList*>  _redis_connections;
     bool                _cluster_enabled;
+    common::RwMutex     _rw_mutex;
     common::Mutex       _update_mutex;
     int64               _recently_update_time_sec;
     TRedisServers       _redis_servers;
+    std::string         _host;
+    int                 _port;
+    std::string         _password;
+    std::string         _timeout;
 };
 
 typedef CRedisClusterClient RedisWrapper;

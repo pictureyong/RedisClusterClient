@@ -3,18 +3,46 @@
 #include <iostream>
 #include <set>
 
-#define NUM_THREAD 10
+#define NUM_THREAD 100
 
 bool InitGetClient() {
     std::vector<redis::TRedisServers::TIpPort> ip_ports;
     redis::TRedisServers::TIpPort ip_port_1("127.0.0.1", 6389);
+    // redis 单点/集群 的 ip 和 port
     ip_ports.push_back(ip_port_1);
-    redis::TRedisServers::TOptions options("1234567Myc", 5, 20);
+    // redis 密码  超时  链接池链接数量 
+    redis::TRedisServers::TOptions options("1234567Myc", 5, NUM_THREAD);
     redis::TRedisServers redis_servers;
     redis_servers.ipPorts = ip_ports;
     redis_servers.options = options;
+    //  使用 配置式链接，配置支持 json 格式的配置，需要安装第三方 json 库， 并打开代码中 Json 相关注释
+    //  推荐 jsoncpp ：https://github.com/open-source-parsers/jsoncpp.git
+    /* json 配置格式
+    {
+        "ip_ports": [
+        {
+            "host": "10.0.0.10",
+            "port": 6379
+        },
+        {
+            "host": "10.0.2.201",
+            "port": 16379
+        },
+        {
+            "host": "10.0.202",
+            "port": 16379
+        }
+        ],
+        "options": {
+            "password": "1234567",
+            "pool_size": 10
+        }
+    }
+    */
+    // 通过配置结构体连接 redis
     if ( !redis::CRedisClusterClient::Instance()->ConnectRedis(redis_servers) ) {
-    // if ( !redis::CRedisClusterClient::Instance()->ConnectRedis("127.0.0.1", 6389, "1234567Myc", 6, 20) ) {
+    // 通过参数连接 redis
+    // if ( !redis::CRedisClusterClient::Instance()->ConnectRedis("127.0.0.1", 6389, "1234567", 6, 20) ) {
         VLOG(FATAL) << __FUNCTION__ << ", ConnectRedis fail.";
         return false;
     }
@@ -49,7 +77,7 @@ bool TestHash(const std::string& pre) {
 
     std::vector<std::string> hkeys;
     std::map<std::string, std::string> values;
-    for (int i = 0;i < 101; ++i ) {
+    for (int i = 0;i < 1000; ++i ) {
         std::string t_hkey = hkey + std::to_string(i);
         hkeys.push_back( t_hkey );
         values.insert(std::pair<std::string, std::string>(t_hkey, value) );
@@ -92,7 +120,7 @@ bool TestList(const std::string& pre) {
     std::string key = pre + "_list_key";
     redis::CRedisClusterClient::Instance()->del( key );
     std::vector<std::string> values;
-    for ( int i = 0;i < 100; ++i ) {
+    for ( int i = 0;i < 1000; ++i ) {
         values.push_back( std::string(i+100, 'a') );
         if ( !redis::CRedisClusterClient::Instance()->rPush(key, values[i]) ) {
             VLOG(ERROR) << __FUNCTION__ << ", rPush Error.";
@@ -121,7 +149,7 @@ bool TestSet(const std::string& pre) {
     std::string key = pre + "_set_key";
     redis::CRedisClusterClient::Instance()->del( key );
     std::set<std::string> values;
-    for ( int i = 0;i < 10; ++i ) {
+    for ( int i = 0;i < 100; ++i ) {
         std::string value(i+100, 'a');
         values.insert( value );
         if ( !redis::CRedisClusterClient::Instance()->sAdd(key, value) ) {
@@ -238,7 +266,7 @@ bool ComprehensiveTest(const std::string& pre) {
 void Run(int idx) {
     VLOG(DEBUG) << __FUNCTION__ << ",START, idx: " << idx;
     int64 st = GetTimeInMs();
-    
+    for (size_t i = 0;i < 10; ++i )  {
     std::string pre = std::to_string(idx) + "_" + std::to_string(st);
     if ( !TestHash( pre ) ) {
         VLOG(ERROR) << __FUNCTION__ << ", TestHash Fail.";
@@ -260,12 +288,16 @@ void Run(int idx) {
         exit(-1);
         return ;
     }
+    /*
     if ( !ComprehensiveTest( pre) ) {
         VLOG(ERROR) << __FUNCTION__ << ", ComprehensiveTest Fail.";
         exit(-1);
         return ;
     }
+    */
+    }
     VLOG(DATA) << __FUNCTION__ << "OVER, HS: " <<  GetTimeInMs() - st;
+    VLOG(DATA) << "";
 }
 
 bool MutilThreadTest() {
@@ -282,12 +314,17 @@ bool MutilThreadTest() {
 
 int main(int argc, char** argv)
 {
+    int64 st = GetTimeInMs();
     if ( !InitGetClient() ) {
         VLOG(ERROR) << __FUNCTION__ << ", InitGetClient fail.";
         return -1;
     }
-
+    //Run(0);
     MutilThreadTest();
+
+    VLOG(DATA) << __FUNCTION__ << "OVER, HS: " <<  GetTimeInMs() - st;
+
+    VLOG(DATA) << "";
 
     return 0;
 }

@@ -71,6 +71,12 @@ bool RedisServers::ParseFromJson(const Json::Value& j_data) {
     return true;
 }
 */
+
+#ifdef THREAD_LOCAL
+pthread_key_t CRedisClusterClient::s_redis_connect;
+std::once_flag CRedisClusterClient::s_redis_connect_flag;
+#endif
+
 bool RedisConnection::ConnectWithTimeout() {
     struct timeval timeoutVal;
     timeoutVal.tv_sec = MAX_TIME_OUT;
@@ -332,9 +338,17 @@ bool CRedisClusterClient::ConnectRedis(const TRedisServers& redis_servers) {
     return false;
 }
 
-bool CRedisClusterClient::ConnectRedis(const std::string& host, int port, const std::string& passwd, int timeout,
+bool CRedisClusterClient::ConnectRedis(const std::string& host, int port,
+        const std::string& passwd, int timeout,
         int pool_size, bool is_from_out) {
     VLOG(DEBUG) << __FUNCTION__ << ", host: " << host << ", port: " <<  port << ", pool_size: " << pool_size;
+#ifdef THREAD_LOCAL
+    std::call_once(s_redis_connect_flag, CRedisClusterClient::initPthreadKey);
+    _host = host;
+    _port = port;
+    _password = passwd;
+    _timeout = timeout;
+#else
     if ( is_from_out ) {
         _redis_servers.ipPorts.push_back( TRedisServers::IpPort(host, port) );
         _redis_servers.options.password = passwd;
@@ -362,6 +376,7 @@ bool CRedisClusterClient::ConnectRedis(const std::string& host, int port, const 
             }
         }
     }
+#endif
     return true;
 }
 
@@ -372,6 +387,9 @@ bool CRedisClusterClient::ReConnectRedis(TRedisConnection *pConn) {
 }
 
 void CRedisClusterClient::Keepalive() {
+#ifdef THREAD_LOCAL
+    ;
+#else
     for ( size_t i = 0;i < _redis_connections.size(); ++i ) {
         for ( size_t j = 0;j < REDIS_SECTION_NUM; ++j ) {
             if ( _redis_connections[i] != NULL ) {
@@ -388,6 +406,7 @@ void CRedisClusterClient::Keepalive() {
             }
         }
     }
+#endif
 }
 
 bool CRedisClusterClient::RedisCommand(RedisResult& result, const char *format, ...) {
@@ -400,7 +419,11 @@ bool CRedisClusterClient::RedisCommand(RedisResult& result, const char *format, 
         VLOG(ERROR) << __FUNCTION__ << ", key is NULL.";
         return false;
     }
+#ifdef THREAD_LOCAL
+    RedisConnectionWrap pRedisConn(getRedisConnect(), NULL);
+#else
     RedisConnectionWrap pRedisConn( findNodeConnection(key), this );
+#endif
     if ( pRedisConn == NULL ) {
         VLOG(ERROR) << __FUNCTION__ << ", pRedisConn is NULL, key: " << key;
         return false;
@@ -428,7 +451,11 @@ bool CRedisClusterClient::RedisCommand(RedisResult& result, const char *format, 
 bool CRedisClusterClient::RedisCommandArgv(const std::vector<std::string>& vDataIn, RedisResult &result) {
     const std::string &key = vDataIn[1];
 
+#ifdef THREAD_LOCAL
+    RedisConnectionWrap pRedisConn(getRedisConnect(), NULL);
+#else
     RedisConnectionWrap pRedisConn( findNodeConnection(key), this );
+#endif
     if (  pRedisConn == NULL ) {
         VLOG(ERROR) << __FUNCTION__ << ", pRedisConn is NULL, key: " << key;
         return false;
@@ -477,6 +504,9 @@ bool CRedisClusterClient::getRedisInfo(const std::string& host, int port, const 
 }
 
 void CRedisClusterClient::release() {
+#ifdef THREAD_LOCAL
+    ;
+#else
     for (size_t  i = 0;i < _redis_connections.size(); ++i ) {
         if ( _redis_connections[i] != NULL ) {
             for (size_t j = 0;j < REDIS_SECTION_NUM; ++j ) {
@@ -491,6 +521,7 @@ void CRedisClusterClient::release() {
         }
     }
     _redis_connections.clear();
+#endif
 }
 
 bool CRedisClusterClient::clusterEnabled(redisContext *ctx) {
@@ -669,6 +700,9 @@ bool CRedisClusterClient::updateRedisClientClusterNodesWrap() {
 }
 
 bool CRedisClusterClient::updateRedisClientClusterNodes() {
+#ifdef THREAD_LOCAL
+    return true;
+#else
     VLOG(DATA) << __FUNCTION__ << ", start.";
     bool is_get_info = false;
     bool is_cluster = false;
@@ -741,9 +775,13 @@ bool CRedisClusterClient::updateRedisClientClusterNodes() {
         _redis_connections.insert(_redis_connections.begin(), redis_connections.begin(), redis_connections.end());
     }
     return true;
+#endif
 }
 
 TRedisConnection* CRedisClusterClient::findNodeConnection(const std::string& key) {
+#ifdef THREAD_LOCAL
+    return NULL;
+#else
     if ( !_cluster_enabled ) {
         if ( !_redis_connections.empty() ) {
             return getConnection(_redis_connections[0]);
@@ -762,9 +800,13 @@ TRedisConnection* CRedisClusterClient::findNodeConnection(const std::string& key
     }
     VLOG(FATAL) << __FUNCTION__ <<  ", Not get match slot range, key: " << key;
     return NULL;
+#endif
 }
 
 TRedisConnection* CRedisClusterClient::findNodeConnectionByMoved(const std::string& moved) {
+#ifdef THREAD_LOCAL
+    return nullptr;
+#else
     if ( !_cluster_enabled ) {
         VLOG(ERROR) << __FUNCTION__ << ", Not is cluster.";
         return NULL;
@@ -783,6 +825,7 @@ TRedisConnection* CRedisClusterClient::findNodeConnectionByMoved(const std::stri
     }
     VLOG(ERROR) << __FUNCTION__ << ", Not find ipPort, " << moved;
     return NULL;
+#endif
 }
 
 int CRedisClusterClient::getKeySlotIndex(const std::string& key)
@@ -855,5 +898,34 @@ void CRedisClusterClient::freeConnection(TRedisConnection *pRedisConn) {
         VLOG(FATAL) << __FUNCTION__ << ", Can not free..";
     }
 }
+
+#ifdef THREAD_LOCAL
+void CRedisClusterClient::initPthreadKey() {
+    int ret = pthread_key_create(&s_redis_connect, CRedisClusterClient::destructorRedisConnect);
+    VLOG(DATA) << "Create pthread key ret: " << ret;
+    return ;
+}
+
+TRedisConnection* CRedisClusterClient::getRedisConnect() {
+    void* ptr = pthread_getspecific(s_redis_connect);
+    if (ptr == nullptr) {
+        TRedisConnection *pRedisconn = new RedisConnection(NULL, _host, _port, _password, 0);
+        if( NULL == pRedisconn || !pRedisconn->ConnectWithTimeout() ) {
+            VLOG(ERROR) << __FUNCTION__ << ", pRedisconn Connect fail.";
+            delete pRedisconn;
+            return NULL;
+        }
+        pthread_setspecific(s_redis_connect, pRedisconn);
+        return pRedisconn;
+    }
+    return reinterpret_cast<TRedisConnection*>(ptr);
+}
+
+void CRedisClusterClient::destructorRedisConnect(void *ptr) {
+    VLOG(DATA) << "destructorRedisConnect";
+    TRedisConnection* pRedisconn = reinterpret_cast<TRedisConnection*>(ptr);
+    delete pRedisconn;
+}
+#endif
 
 }
