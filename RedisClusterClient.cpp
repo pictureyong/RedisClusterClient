@@ -394,8 +394,13 @@ void CRedisClusterClient::Keepalive() {
     for ( size_t i = 0;i < _redis_connections.size(); ++i ) {
         for ( size_t j = 0;j < REDIS_SECTION_NUM; ++j ) {
             if ( _redis_connections[i] != NULL ) {
-                TRedisConnectionList::TConnectionMutex& connection_mutex = _redis_connections[i]->connectionMutexs[j];
+                TRedisConnectionList::TConnectionMutex& connection_mutex =
+                    _redis_connections[i]->connectionMutexs[j];
+#ifdef CONDITION
                 common::MutexLock lock( *connection_mutex.mutex );
+#else
+                common::RMutexLock lock( *connection_mutex.mutex );
+#endif
                 for ( TRedisConnectionIter iter = connection_mutex.redisConnections->begin();
                         iter != connection_mutex.redisConnections->end(); ++iter ) {
                     TRedisConnection* conn = *iter;
@@ -610,7 +615,12 @@ void CRedisClusterClient::resizeRedisConns(std::vector<TRedisConnectionList*>& r
     for ( size_t i = 0;i < redis_connections.size(); ++i ) {
         redis_connections[i] = new TRedisConnectionList();
         for ( size_t j = 0;j < REDIS_SECTION_NUM; ++j ) {
+#ifdef CONDITION
             redis_connections[i]->connectionMutexs[j].mutex = new common::Mutex();
+            redis_connections[i]->connectionMutexs[j].condition = new common::Condition();
+#else
+            redis_connections[i]->connectionMutexs[j].mutex = new common::RMutex();
+#endif
             redis_connections[i]->connectionMutexs[j].redisConnections = new std::list<RedisConnection*>();
         }
         redis_connections[i]->redisNodeInfo = nodes[i];
@@ -689,7 +699,7 @@ bool CRedisClusterClient::dealErrorReply(const std::string& func, const std::str
 
 bool CRedisClusterClient::updateRedisClientClusterNodesWrap() {
     int64 cur_sec = GetTimeInSecond();
-    common::MutexLock lock( _update_mutex );
+    common::RMutexLock lock( _update_mutex );
     if ( cur_sec - _recently_update_time_sec > UPDATE_MIN_INTERVAL_SEC ) {
         updateRedisClientClusterNodes();
         _recently_update_time_sec = GetTimeInSecond();
@@ -848,12 +858,29 @@ TRedisConnection *CRedisClusterClient::getConnection(TRedisConnectionList* redis
         //_Thrd_imp_t t = *(_Thrd_imp_t*)(char*)&tid;
         //int idx = t._Id % REDIS_SECTION_NUM;
         for ( size_t i = 0;i < REDIS_SECTION_NUM; ++i, ++idx ) {
+            TRedisConnectionList::TConnectionMutex& connect_mutex =
+                redis_connection_list->connectionMutexs[idx% REDIS_SECTION_NUM];
+#ifdef CONDITION
+            while ( true ) {
+                common::MutexLock lock(*connect_mutex.mutex);
+                if ( connect_mutex.redisConnections->size() == 0 ) {
+                    connect_mutex.condition->wait(lock,
+                            [&connect_mutex]()->bool {return connect_mutex.redisConnections->size() > 0;});
+                }
+                if (connect_mutex.redisConnections->size() > 0 ) {
+                    TRedisConnection* redis_conn =
+                        connect_mutex.redisConnections->front();
+                    connect_mutex.redisConnections->pop_front();
+                    return redis_conn;
+                }
+                VLOG(DATA) << "after wait size is still 0";
+            }
+#else
             do {
-                TRedisConnectionList::TConnectionMutex& connect_mutex =
-                    redis_connection_list->connectionMutexs[idx% REDIS_SECTION_NUM];
-                common::MutexLock lock( *connect_mutex.mutex );
+                common::RMutexLock lock( *connect_mutex.mutex );
                 if ( connect_mutex.redisConnections->size() > 0 ) {
-                    TRedisConnection* redis_conn = connect_mutex.redisConnections->front();
+                    TRedisConnection* redis_conn =
+                        connect_mutex.redisConnections->front();
                     connect_mutex.redisConnections->pop_front();
                     return redis_conn;
                 } else {
@@ -861,6 +888,7 @@ TRedisConnection *CRedisClusterClient::getConnection(TRedisConnectionList* redis
                 }
             } while(0);
             usleep(1000);
+#endif
         }
     }
     return NULL;
@@ -896,8 +924,14 @@ int CRedisClusterClient::keyHashSlot(const char *key, size_t keylen) {
 
 void CRedisClusterClient::freeConnection(TRedisConnection *pRedisConn) {
     if ( pRedisConn != NULL && pRedisConn->redisConnectionList != NULL ) {
-        common::MutexLock lock( *(pRedisConn->redisConnectionList->mutex) );
+#ifdef CONDITION
+        common::MutexLock lock(*(pRedisConn->redisConnectionList->mutex));
         pRedisConn->redisConnectionList->redisConnections->push_back( pRedisConn );
+        pRedisConn->redisConnectionList->condition->notify_one();
+#else
+        common::RMutexLock lock( *(pRedisConn->redisConnectionList->mutex) );
+        pRedisConn->redisConnectionList->redisConnections->push_back( pRedisConn );
+#endif
     } else {
         VLOG(FATAL) << __FUNCTION__ << ", Can not free..";
     }

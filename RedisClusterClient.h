@@ -14,36 +14,32 @@
 #include <vector>
 #include <string>
 
+#include <mutex>
+#include <condition_variable>
+
 // #define THREAD_LOCAL
 
 #ifdef THREAD_LOCAL
 #include <pthread.h>
+#else
+#define CONDITION
 #endif
 
 #include "Util.h"
 #include "hiredis/hiredis.h"
 
-// #include <boost/thread.hpp>
-// #include <mutex>
-// #include <shared_mutex>
 #include "Mutex.hpp"
 
 #define MAX_REDIS_POOLSIZE 242
 #define MAX_TIME_OUT       5
 #define REDIS_SECTION_NUM  1
 
-/*
-namespace common  {
-    typedef boost::recursive_mutex Mutex;
-    typedef boost::recursive_mutex::scoped_lock MutexLock;
-    typedef boost::shared_mutex RwMutex;
-    typedef boost::unique_lock<RwMutex> WriterMutexLock;
-    typedef boost::shared_lock<RwMutex> ReaderMutexLock;
-}
-*/
 namespace common {
-    typedef std::recursive_mutex Mutex;
-    typedef std::unique_lock<std::recursive_mutex> MutexLock;
+    typedef std::mutex Mutex;
+    typedef std::unique_lock<std::mutex> MutexLock;
+    typedef std::condition_variable Condition;
+    typedef std::recursive_mutex RMutex;
+    typedef std::unique_lock<std::recursive_mutex> RMutexLock;
     typedef WFirstRWLock RwMutex;
     typedef UniqueWriteGuard<RwMutex> WriterMutexLock;
     typedef UniqueReadGuard<RwMutex> ReaderMutexLock;
@@ -156,7 +152,12 @@ typedef struct RedisConnectionList {
             delete mutex;
         }
         std::list<RedisConnection*>*    redisConnections;
-        common::Mutex*                  mutex;
+#ifdef CONDITION
+        common::Mutex                   *mutex;
+        common::Condition               *condition;
+#else
+        common::RMutex*                 mutex;
+#endif
     } TConnectionMutex;
     TConnectionMutex                connectionMutexs[REDIS_SECTION_NUM];
     RedisNodeInfo*                  redisNodeInfo;
@@ -315,7 +316,7 @@ private:
      
     bool                _cluster_enabled;
     common::RwMutex     _rw_mutex;
-    common::Mutex       _update_mutex;
+    common::RMutex       _update_mutex;
     int64               _recently_update_time_sec;
     TRedisServers       _redis_servers;
     std::string         _host;
